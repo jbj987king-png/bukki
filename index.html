@@ -1243,123 +1243,20 @@ function calcResult() {
 }
 
 function showResult() {
-  // 태그 수집 및 점수 계산
+  // 독서 유형 결정용 태그 점수 (q4·q5·q7만 사용 — 장르 q3 제외)
+  // 실제 도서 추천은 아래 keywordScore를 별도로 계산해서 사용한다.
   const tagScore = {};
-  const weights = { q3: 30, q4: 20, q5: 20, q6: 5, q7: 15, q1: 5, q2: 5 };
-
-  [3,4,5,7].forEach(n => {
+  const weights = { q4: 20, q5: 20, q7: 15 };
+  [4, 5, 7].forEach(n => {
     const q = QUESTIONS[n - 1];
-    const sel = answers['q' + n] || [];
-    sel.forEach(idx => {
-      const tags = q.choices[idx].tags || [];
-      tags.forEach(t => { tagScore[t] = (tagScore[t] || 0) + weights['q' + n]; });
+    (answers['q' + n] || []).forEach(idx => {
+      (q.choices[idx].tags || []).forEach(t => {
+        tagScore[t] = (tagScore[t] || 0) + weights['q' + n];
+      });
     });
   });
 
-  // genre_kr 기반 태그 점수 보강 매핑
-  const genreKrTagMap = {
-    'IT': ['IT', '지식', '교양'],
-    '건강': ['자기계발', '실용적', '지식'],
-    '경제/경영': ['경제경영', '자기계발', '실용', '성공'],
-    '교육': ['자기계발', '실용', '지식'],
-    '기술과학': ['지식', '교양', '과학'],
-    '사회과학': ['심리', '인간', '사유', '지식'],
-    '소설': ['한국소설', '국내문학', '감성'],
-    '시': ['에세이', '감성', '힐링', '일상'],
-    '에세이': ['에세이', '일상', '감성', '힐링'],
-    '여행': ['에세이', '일상', '힐링'],
-    '역사/인물': ['역사소설', '시대', '전통', '서사'],
-    '예술': ['에세이', '감성', '문화'],
-    '요리': ['에세이', '일상', '실용'],
-    '인문학': ['심리', '철학', '인간', '사유'],
-    '자연과학': ['지식', '교양', '과학'],
-    '종교': ['심리', '철학', '인간'],
-    '언어': ['지식', '실용', '교양'],
-    '추리소설': ['추리', '스릴러', '긴장감', '범죄', '반전'],
-    '세계문학': ['세계문학', '번역', '외국', '감성'],
-    '판타지소설': ['판타지', '모험', '세계관', '영웅', '상상력'],
-  };
-
-  // 난이도 선택
-  const diffSel = (answers['q6'] || [0])[0];
-  const diffChoice = QUESTIONS[5].choices[diffSel];
-  const preferDifficulty = diffChoice.difficulty || 'all';
-
-  // 연령 필터
-  const ageSel = (answers['q2'] || [3])[0];
-  const ageChoice = QUESTIONS[1].choices[ageSel];
-  const ageGroup = ageChoice.ageGroup;
-
-  // ── 장르별 도서 풀 크기 (도서 수에 반비례해서 보정 계수 산출) ──────
-  // 특정 장르(추리·SF·판타지)가 수가 많아도 결과를 독점하지 못하도록
-  // 장르별 최대 추천 허용 수(quota)를 설정한다.
-  const GENRE_QUOTA = {
-    '추리소설': 1, 'SF소설': 1, '판타지소설': 1,
-    '소설': 2, '에세이': 2,
-  };
-  // 특정 장르가 아무것도 선택 안 됐을 때 과추천 방지용 패널티 배율
-  // (사용자가 해당 장르를 선택했으면 1.0 = 패널티 없음)
-  const specialGenres = ['추리소설','SF소설','판타지소설'];
-
-  // 도서 점수 계산
-  const bookScores = BOOKS.map(book => {
-    let score = 0;
-
-    // 1) 태그 기반 점수: 중복 태그 누적 방지를 위해 책 당 태그 점수는 최대 2개만 합산
-    const tagHits = book.tags
-      .map(t => tagScore[t] || 0)
-      .filter(s => s > 0)
-      .sort((a, b) => b - a)
-      .slice(0, 2);
-    tagHits.forEach(s => { score += s; });
-
-    // 2) genre_kr 태그맵 보정: 사용자 선택 장르와 책 장르가 일치할 때만 소폭 가산
-    if (book.genre_kr && genreKrTagMap[book.genre_kr]) {
-      const genreBonus = genreKrTagMap[book.genre_kr]
-        .map(t => tagScore[t] || 0)
-        .filter(s => s > 0)
-        .slice(0, 1)          // 최대 1개 태그만 반영
-        .reduce((a, v) => a + v * 0.4, 0);
-      score += genreBonus;
-    }
-
-    // 3) 특수 장르 패널티: 추리·SF·판타지는 사용자가 직접 선택하지 않았으면 점수 감쇄
-    if (specialGenres.includes(book.genre_kr)) {
-      // 해당 장르 태그가 tagScore에 있으면 사용자가 선택한 것
-      const genreTags = genreKrTagMap[book.genre_kr] || [];
-      const userChoseGenre = genreTags.some(t => (tagScore[t] || 0) > 0);
-      if (!userChoseGenre) {
-        score *= 0.2;   // 선택 안 했으면 강하게 감쇄
-      } else {
-        score *= 0.75;  // 선택했어도 다른 장르와의 균형을 위해 소폭 감쇄
-      }
-    }
-
-    // 4) 시(詩)는 기존과 동일하게 소폭 감쇄
-    if (book.genre_kr === '시') score *= 0.6;
-
-    // 5) 난이도 보정
-    if (preferDifficulty !== 'all') {
-      if (book.difficulty === preferDifficulty) score += 12;
-      else score -= 8;
-    }
-
-    // 6) 연령 필터
-    if (ageGroup === '어린이') {
-      if (book.age === '어린이' || book.age === '유아') score += 60;
-      else score = -9999;
-      if (book.genre_kr) score += 10;
-    } else if (ageGroup === '청소년') {
-      if (book.age === '어린이' || book.age === '유아') score = -9999;
-      if (book.age === '청소년') score += 40;
-    } else {
-      if (['유아','어린이','청소년'].includes(book.age)) score = -9999;
-    }
-
-    return { ...book, score };
-  });
-
-  // 랜덤 셔플 함수 (Fisher-Yates)
+  // ── [공통 유틸] ──────────────────────────────────────────────────
   function shuffleArray(arr) {
     const a = [...arr];
     for (let i = a.length - 1; i > 0; i--) {
@@ -1368,96 +1265,174 @@ function showResult() {
     }
     return a;
   }
-
-  // 골고루 추천을 위한 랜덤 가중치 부여 함수
-  function addRandomBoost(arr, boostRange) {
-    return arr.map(b => ({ ...b, score: b.score + Math.random() * boostRange }));
+  function addRandomBoost(arr, range) {
+    return arr.map(b => ({ ...b, score: b.score + Math.random() * range }));
   }
 
-  // 장르 쿼터 적용: 결과 목록에서 동일 장르가 quota를 초과하면 제거
-  function applyGenreQuota(books, totalSlots) {
-    const genreCount = {};
-    const result = [];
-    for (const b of books) {
-      const q = GENRE_QUOTA[b.genre_kr];
-      const cnt = genreCount[b.genre_kr] || 0;
-      if (q !== undefined && cnt >= q) continue;   // 쿼터 초과 → 건너뜀
-      genreCount[b.genre_kr] = cnt + 1;
-      result.push(b);
-      if (result.length >= totalSlots) break;
+  // ── [난이도 / 연령] ───────────────────────────────────────────────
+  const diffSel = (answers['q6'] || [0])[0];
+  const preferDifficulty = QUESTIONS[5].choices[diffSel].difficulty || 'all';
+
+  const ageSel = (answers['q2'] || [3])[0];
+  const ageGroup = QUESTIONS[1].choices[ageSel].ageGroup;
+
+  // ── [1순위] 장르 점수 계산 ────────────────────────────────────────
+  // q3(장르 선택)의 태그를 genre_kr 단위로 집계해 "사용자가 선택한 장르" 점수맵을 만든다.
+  // 장르 선택(q3)은 가중치 최우선 반영
+  const GENRE_WEIGHT = 100;   // 장르 1개 선택 시 해당 장르 도서에 줄 기본 보너스
+
+  // q3 선택 인덱스 → genre_kr 목록으로 변환하는 매핑
+  const Q3_GENRE_MAP = [
+    ['소설'],                          // 한국 소설
+    ['소설','세계문학'],               // 세계 문학
+    ['추리소설'],                      // 추리·스릴러
+    ['SF소설'],                        // SF·과학소설
+    ['판타지소설'],                    // 판타지·모험
+    ['소설'],                          // 로맨스·순정  (소설 계열)
+    ['역사/인물'],                     // 역사·시대물
+    ['에세이'],                        // 에세이·산문
+    ['경제/경영'],                     // 경제·경영
+    ['인문학'],                        // 심리·철학
+  ];
+
+  // 사용자가 q3에서 선택한 genre_kr 목록 (중복 포함, 선택 안 하면 빈 배열)
+  const selectedGenreKrs = new Set();
+  (answers['q3'] || []).forEach(idx => {
+    (Q3_GENRE_MAP[idx] || []).forEach(g => selectedGenreKrs.add(g));
+  });
+
+  // ── [2순위] 키워드(태그) 점수 계산 ───────────────────────────────
+  // q3을 제외한 나머지 문항(q4·q5·q7)의 태그를 집계 → "선호 키워드" 점수맵
+  const KEYWORD_WEIGHTS = { q4: 20, q5: 20, q7: 15 };
+  const keywordScore = {};   // 태그 → 점수 (장르 제외 문항만)
+  [4, 5, 7].forEach(n => {
+    const q = QUESTIONS[n - 1];
+    (answers['q' + n] || []).forEach(idx => {
+      (q.choices[idx].tags || []).forEach(t => {
+        keywordScore[t] = (keywordScore[t] || 0) + KEYWORD_WEIGHTS['q' + n];
+      });
+    });
+  });
+
+  // ── [도서 점수 계산] ──────────────────────────────────────────────
+  // 점수 구조: 장르 점수(1순위) + 키워드 점수(2순위) + 난이도 보정
+  // 장르 점수와 키워드 점수를 독립 계산 후 합산해
+  // 장르가 명확히 1순위로 작동하게 한다.
+  const bookScores = BOOKS.map(book => {
+    if (['유아','어린이','청소년'].includes(book.age) && !['어린이','청소년'].includes(ageGroup)) {
+      return { ...book, score: -9999 };
     }
-    return result;
-  }
+    if (['유아','어린이'].includes(book.age) && ageGroup === '청소년') {
+      return { ...book, score: -9999 };
+    }
 
-  // ── STEP 1: 독서 유형 결정 ───────────────────────────────────────
+    // ① 장르 점수 (1순위) ─────────────────────────────────────────
+    let genreScore = 0;
+    if (selectedGenreKrs.size > 0) {
+      if (selectedGenreKrs.has(book.genre_kr)) {
+        // 사용자가 선택한 장르와 정확히 일치
+        genreScore = GENRE_WEIGHT;
+      } else {
+        // 선택하지 않은 장르 → 페널티 없이 0점 (키워드로만 경쟁)
+        genreScore = 0;
+      }
+    } else {
+      // q3 무선택 시 장르 구분 없이 모두 동등하게
+      genreScore = 30;
+    }
+
+    // ② 키워드 점수 (2순위) ──────────────────────────────────────
+    // 책 태그와 keywordScore 교집합 중 상위 3개만 반영 (중복 누적 방지)
+    const kwHits = (book.tags || [])
+      .map(t => keywordScore[t] || 0)
+      .filter(s => s > 0)
+      .sort((a, b) => b - a)
+      .slice(0, 3);
+    const kwScore = kwHits.reduce((sum, s) => sum + s, 0);
+
+    // ③ 난이도 보정
+    let diffBonus = 0;
+    if (preferDifficulty !== 'all') {
+      diffBonus = book.difficulty === preferDifficulty ? 10 : -5;
+    }
+
+    // ④ 연령 보정
+    let ageBonus = 0;
+    if (ageGroup === '어린이') {
+      ageBonus = (book.age === '어린이' || book.age === '유아') ? 50 : -9999;
+    } else if (ageGroup === '청소년') {
+      ageBonus = book.age === '청소년' ? 30 : 0;
+    }
+    if (ageBonus <= -9000) return { ...book, score: -9999 };
+
+    const score = genreScore + kwScore * 0.4 + diffBonus + ageBonus;
+    return { ...book, score };
+  });
+
+  // ── [독서 유형 결정] ──────────────────────────────────────────────
+  // keywordScore(q4·q5·q7 태그)로 독서 유형 결정
   const typeScores = READER_TYPES.map(type => {
     let ts = 0;
-    type.topTags.forEach(t => { ts += (tagScore[t] || 0); });
+    type.topTags.forEach(t => { ts += (keywordScore[t] || 0); });
     return { ...type, ts };
   });
   const bestType = typeScores.sort((a,b) => b.ts - a.ts)[0];
 
-  // ── STEP 2: 독자 유형 topTags 보너스 (1회만, 보너스 상한 설정) ────
-  // 태그 1개 일치 당 고정 보너스(상한 있음)를 주어 같은 장르 책이
-  // 여러 태그 중복으로 보너스를 폭발적으로 쌓는 현상을 방지한다.
-  const TYPE_BONUS_PER_TAG = 40;   // 태그 1개 당 보너스
-  const TYPE_BONUS_MAX = 80;        // 책 1권 당 최대 보너스 상한
-  bookScores.forEach(b => {
-    if (b.score <= -9999) return;
-    const matchCount = bestType.topTags.filter(t => (b.tags || []).includes(t)).length;
-    if (matchCount > 0) {
-      b.score += Math.min(TYPE_BONUS_PER_TAG * matchCount, TYPE_BONUS_MAX);
+  // ── [장르별 최대 추천 수 제한] ────────────────────────────────────
+  // 사용자가 선택한 장르는 최대 2권, 미선택 장르는 최대 1권으로 제한해
+  // 한 장르가 5권을 독점하는 현상 방지
+  function pickWithGenreLimit(sorted, slots) {
+    const selectedCount = {};   // 선택 장르
+    const otherCount   = {};    // 미선택 장르
+    const result = [];
+    for (const b of sorted) {
+      if (result.length >= slots) break;
+      const isSelected = selectedGenreKrs.has(b.genre_kr);
+      const cnt = isSelected
+        ? (selectedCount[b.genre_kr] || 0)
+        : (otherCount[b.genre_kr]   || 0);
+      const limit = isSelected ? 2 : 1;
+      if (cnt >= limit) continue;
+      if (isSelected) selectedCount[b.genre_kr] = cnt + 1;
+      else             otherCount[b.genre_kr]   = cnt + 1;
+      result.push(b);
     }
-  });
+    return result;
+  }
 
-  // ── STEP 3: 연령별 도서 선별 (쿼터 적용) ────────────────────────
+  // ── [연령별 도서 선별] ────────────────────────────────────────────
   let topBooks;
 
   if (ageGroup === '청소년') {
-    // 청소년: 청소년도서 3권 + 성인도서 2권
     const teenBooks  = bookScores.filter(b => b.age === '청소년' && b.score > -9999);
     const adultBooks = bookScores.filter(b => b.age === '일반'   && b.score > -9999);
-
-    const teenSorted  = addRandomBoost(teenBooks,  20).sort((a,b) => b.score - a.score);
-    const teenPicked  = applyGenreQuota(teenSorted,  3);
-
-    const adultSorted = addRandomBoost(adultBooks, 20).sort((a,b) => b.score - a.score);
-    const adultPicked = applyGenreQuota(adultSorted, 2);
-
+    const teenPicked  = pickWithGenreLimit(addRandomBoost(teenBooks,  15).sort((a,b) => b.score - a.score), 3);
+    const adultPicked = pickWithGenreLimit(addRandomBoost(adultBooks, 15).sort((a,b) => b.score - a.score), 2);
     topBooks = shuffleArray([...teenPicked, ...adultPicked]);
 
   } else if (ageGroup === '어린이') {
-    // 어린이: 아동도서 3권 + 그림책 2권
     const childBooks   = bookScores.filter(b => b.age === '어린이' && b.score > -9999);
     const pictureBooks = bookScores.filter(b => b.age === '유아'   && b.score > -9999);
-
-    const childSorted   = addRandomBoost(childBooks,   25).sort((a,b) => b.score - a.score);
-    const childPicked   = applyGenreQuota(childSorted,   3);
-
-    const pictureSorted = addRandomBoost(pictureBooks, 40).sort((a,b) => b.score - a.score);
-    const picturePicked = applyGenreQuota(pictureSorted, 2);
-
+    const childPicked   = pickWithGenreLimit(addRandomBoost(childBooks,   20).sort((a,b) => b.score - a.score), 3);
+    const picturePicked = pickWithGenreLimit(addRandomBoost(pictureBooks, 30).sort((a,b) => b.score - a.score), 2);
     topBooks = [...childPicked, ...picturePicked];
 
   } else {
-    // 성인: 5권 (쿼터 적용)
     const eligible = bookScores.filter(b => b.score > -9999 && b.age === '일반');
-    const boosted   = addRandomBoost(eligible, 20).sort((a,b) => b.score - a.score);
-    topBooks = applyGenreQuota(boosted, 5);
+    topBooks = pickWithGenreLimit(addRandomBoost(eligible, 15).sort((a,b) => b.score - a.score), 5);
   }
 
-  // 상위 키워드
-  const topKeywords = Object.entries(tagScore).sort((a,b) => b[1]-a[1]).slice(0,6).map(e => e[0]);
+  // 선호 키워드 표시 (2순위 keywordScore 기준 — 장르 태그 제외된 순수 취향 키워드)
+  const topKeywords = Object.entries(keywordScore).sort((a,b) => b[1]-a[1]).slice(0,6).map(e => e[0]);
 
-  // 장르 TOP3
-  const genreScore = {};
+  // 장르 TOP (q3 직접 선택 기준)
+  const genreDisplayScore = {};
   QUESTIONS[2].choices.forEach((c, i) => {
     if ((answers['q3'] || []).includes(i)) {
-      c.text && (genreScore[c.text] = (genreScore[c.text] || 0) + 30);
+      c.text && (genreDisplayScore[c.text] = (genreDisplayScore[c.text] || 0) + 30);
     }
   });
-  // 추가로 콘텐츠/목적에서 장르 유추
-  const topGenres = Object.entries(genreScore).sort((a,b)=>b[1]-a[1]).slice(0,3);
+  const topGenres = Object.entries(genreDisplayScore).sort((a,b)=>b[1]-a[1]).slice(0,3);
   const genreMedals = ['🥇','🥈','🥉'];
 
   // 결과 렌더링
